@@ -1,0 +1,41 @@
+[project]
+name = "pickcat-summary"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Xiaole6324", email = "2710182206@qq.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "httpx>=0.28.1",
+    "langchain>=1.4.4",
+    "langchain-openapi>=0.1.1",
+    "pydantic>=2.14.0",
+    "sqlmodel>=0.0.48",
+]
+
+[project.scripts]
+pickcat-summary = "pickcat_summary:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-dotenv>=0.5.2",
+    "python-dotenv>=1.2.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["test"]
+addopts = "-ra --strict-markers"
+# 异步测试: auto 模式下 async def 测试/fixture 无需手动打 @pytest.mark.asyncio
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+# dotenv: 按顺序加载, shell 中已存在的环境变量优先(不被 .env 覆盖)
+env_files = [".env", ".env.test"]
+env_override_existing_values = 0
