@@ -1,7 +1,6 @@
 import asyncio
 import os
 import sys
-from pprint import pprint
 
 import dotenv
 from sqlalchemy.ext.asyncio import create_async_engine
