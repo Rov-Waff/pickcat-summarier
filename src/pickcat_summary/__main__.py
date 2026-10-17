@@ -21,7 +21,7 @@ SYS_PROMPT = """
 
 用户输入将会是一个帖子的标题 内容 和全部回复
 
-输出格式为Markdown
+输出格式为Markdown 里面不得包含任何URL链接
 """
 
 
@@ -111,6 +111,7 @@ async def proc(model: ChatOpenAI, topic: TopicDetial) -> AIMessage:
     )
 
     logger.info("主题总结完成：%s", topic.title)
+    logger.debug(resp.content)
     return resp
 
 
@@ -144,7 +145,7 @@ async def main():
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
     logger.info("数据库初始化完成")
-    sess = AsyncSession(engine)
+    sess = AsyncSession(engine, expire_on_commit=False)
     if username is None or password is None:
         logger.error("未提供 Pickcat 账号密码")
         print("未提供Pickcat账号密码")
@@ -156,32 +157,35 @@ async def main():
         await refresh_queue(account, sess)
         # 拿一个帖子Id
         id_stmt = select(Processed).where(Processed.is_proc == False).limit(1)
-        id = (await sess.exec(id_stmt)).first()
-        if id is None:
+        proc_item = (await sess.exec(id_stmt)).first()
+        if proc_item is None:
             logger.debug("当前没有待处理主题，10 秒后重试")
             await asyncio.sleep(10)
             continue
 
+        topic_id = proc_item.id  # 提前缓存，避免 commit 后属性过期触发同步懒加载
         try:
-            logger.info("开始处理主题：%s", id.id)
-            detail = await get_topic_details(account, id.id)
+            logger.info("开始处理主题：%s", topic_id)
+            detail = await get_topic_details(account, topic_id)
             llm_resp = await proc(model, detail)
-            id.is_proc = True
-            sess.add(id)
-            await sess.commit()
-            logger.info("主题处理完成：%s", id.id)
 
-            # 发出去
-            await account.client.post(
+            # 先发帖，成功后再标记为已处理；发帖失败时 is_proc 保持 False，下一轮会重试
+            resp = await account.client.post(
                 "/api/v1/posts",
                 json={
-                    "topicId": id.id,
+                    "topicId": topic_id,
                     "markdown": llm_resp.content,
                     "replyToPostNumber": 1,
                 },
             )
+            resp.raise_for_status()
+
+            proc_item.is_proc = True
+            sess.add(proc_item)
+            await sess.commit()
+            logger.info("主题处理完成：%s", topic_id)
         except Exception:
-            logger.exception("处理主题失败：%s", id.id)
+            logger.exception("处理主题失败：%s", topic_id)
             await sess.rollback()
         await asyncio.sleep(30)
 
