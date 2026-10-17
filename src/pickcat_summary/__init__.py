@@ -1,6 +1,7 @@
 from typing import Any
 
 from httpx import AsyncClient
+from pydantic import BaseModel
 from sqlmodel import Field, SQLModel
 
 
@@ -37,7 +38,18 @@ class Account:
         return (await self.client.get(f"/api/v1/topics/{id}/posts")).json()
 
 
-class Processed(SQLModel,table=True):
+class Processed(SQLModel, table=True):
     id: str = Field(primary_key=True)
-    is_proc:bool
+    is_proc: bool
 
+
+class PostDetial(BaseModel):
+    author_name: str
+    content: str
+
+
+class TopicDetial(BaseModel):
+    author_name: str
+    content: str
+    title:str
+    posts: list[PostDetial]
