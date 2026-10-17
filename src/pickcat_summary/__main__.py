@@ -114,8 +114,15 @@ async def proc(model: ChatOpenAI, topic: TopicDetial) -> AIMessage:
     logger.debug(resp.content)
     return resp
 
-
+BANNER=r"""
+  ____                                       _
+ / ___| _   _ _ __ ___  _ __ ___   __ _ _ __(_)_______ _ __
+ \___ \| | | | '_ ` _ \| '_ ` _ \ / _` | '__| |_  / _ \ '__|
+  ___) | |_| | | | | | | | | | | | (_| | |  | |/ /  __/ |
+ |____/ \__,_|_| |_| |_|_| |_| |_|\__,_|_|  |_/___\___|_|
+"""
 async def main():
+    print(BANNER)
     dotenv.load_dotenv()
     log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
     logging.basicConfig(
