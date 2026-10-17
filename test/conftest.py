@@ -46,9 +46,7 @@ def mock_transport() -> httpx.MockTransport:
 async def client(mock_transport: httpx.MockTransport):
     """公共 AsyncClient fixture, base_url 优先取环境变量 PICKCAT_BASE_URL。"""
     base_url = os.environ.get("PICKCAT_BASE_URL", "https://cdsq.dao3.fun")
-    async with httpx.AsyncClient(
-        base_url=base_url, transport=mock_transport
-    ) as client:
+    async with httpx.AsyncClient(base_url=base_url, transport=mock_transport) as client:
         yield client
 
 
