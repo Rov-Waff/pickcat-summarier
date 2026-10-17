@@ -1,6 +1,7 @@
 from typing import Any
 
 from httpx import AsyncClient
+from sqlmodel import Field, SQLModel
 
 
 class Account:
@@ -34,3 +35,9 @@ class Account:
     async def get_posts(self, id: str) -> Any:
         """获取回复"""
         return (await self.client.get(f"/api/v1/topics/{id}/posts")).json()
+
+
+class Processed(SQLModel,table=True):
+    id: str = Field(primary_key=True)
+    is_proc:bool
+
