@@ -1,9 +1,10 @@
 import asyncio
+import logging
 import os
 import sys
-from pprint import pprint
 
 import dotenv
+from langchain_core.messages.ai import AIMessage
 from langchain_openai import ChatOpenAI
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel, select
@@ -11,12 +12,16 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from pickcat_summary import Account, PostDetial, Processed, TopicDetial
 
+logger = logging.getLogger(__name__)
+
 SYS_PROMPT = """
 你是一个严谨、客观的论坛帖子总结器。根据提供的主题标题、正文和回复，生成简体中文总结。
 
 准确概括主题讨论的问题、发帖者的主要观点或诉求，以及回复中的重要信息、建议和不同意见。区分事实、观点与推测；不得编造原文没有的信息。存在分歧时，分别说明各方观点，不要将其写成共识。忽略寒暄、重复和无关内容，保留重要细节与结论。
 
 用户输入将会是一个帖子的标题 内容 和全部回复
+
+输出格式为Markdown
 """
 
 
@@ -24,16 +29,20 @@ async def refresh_queue(acc: Account, sess: AsyncSession):
 
     metioneds = await acc.get_metioned()
     tids = [item["details"]["topic"]["id"] for item in metioneds["items"]]
+    added = 0
     for i in tids:
         stmt = select(Processed).where(Processed.id == i)
         model = (await sess.exec(stmt)).first()
         if model is None:
             model = Processed(id=i, is_proc=False)
             sess.add(model)
+            added += 1
     await sess.commit()
+    logger.info("队列刷新完成：获取到 %d 个主题，新增 %d 个待处理项", len(tids), added)
 
 
 async def get_topic_details(acc: Account, id: str) -> TopicDetial:
+    logger.info("开始获取主题详情：%s", id)
     topic_detail = await acc.get_details(id)
 
     # 获取回复
@@ -55,6 +64,7 @@ async def get_topic_details(acc: Account, id: str) -> TopicDetial:
                 )
             if res["pageInfo"]["hasNextPage"]:
                 cursor = res["pageInfo"]["nextCursor"]
+                logger.debug("主题 %s 回复还有下一页", id)
             else:
                 break
         else:
@@ -72,10 +82,12 @@ async def get_topic_details(acc: Account, id: str) -> TopicDetial:
                 )
             if res["pageInfo"]["hasNextPage"]:
                 cursor = res["pageInfo"]["nextCursor"]
+                logger.debug("主题 %s 回复还有下一页", id)
             else:
                 break
 
     # 组装
+    logger.info("主题 %s 详情获取完成，共 %d 条回复", id, len(post_list))
 
     return TopicDetial(
         author_name=topic_detail["author"]["username"],
@@ -85,7 +97,8 @@ async def get_topic_details(acc: Account, id: str) -> TopicDetial:
     )
 
 
-async def proc(model: ChatOpenAI, topic: TopicDetial):
+async def proc(model: ChatOpenAI, topic: TopicDetial) -> AIMessage:
+    logger.info("开始总结主题：%s", topic.title)
     prompt = ""
     prompt += (
         f"标题:{topic.title} \n 作者:{topic.author_name} \n 内容:{topic.content}\n"
@@ -93,14 +106,22 @@ async def proc(model: ChatOpenAI, topic: TopicDetial):
     prompt += "====回复====\n"
     for post in topic.posts:
         prompt += f"作者: {post.author_name} \n 内容:{post.content} \n ======="
-    resp = await model.ainvoke(
+    resp: AIMessage = await model.ainvoke(
         [{"role": "system", "content": SYS_PROMPT}, {"role": "user", "content": prompt}]
     )
-    pprint(resp.content)
+
+    logger.info("主题总结完成：%s", topic.title)
+    return resp
 
 
 async def main():
     dotenv.load_dotenv()
+    log_level = getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logger.info("总结任务启动")
     username = os.getenv("PICKCAT_USERNAME")
     password = os.getenv("PICKCAT_PASSWORD")
     db_url = os.getenv("DB_URL")
@@ -109,9 +130,11 @@ async def main():
     model = os.getenv("OPENAI_MODEL")
 
     if db_url is None:
+        logger.error("未提供 DB_URL")
         print("未提供DB_URL")
         sys.exit(-1)
     if openai_base_url is None or api_key is None or model is None:
+        logger.error("未完整提供 OpenAI 配置")
         print("提供OPENAI_")
         sys.exit(-1)
 
@@ -120,11 +143,14 @@ async def main():
     engine = create_async_engine(db_url)
     async with engine.begin() as conn:
         await conn.run_sync(SQLModel.metadata.create_all)
+    logger.info("数据库初始化完成")
     sess = AsyncSession(engine)
     if username is None or password is None:
+        logger.error("未提供 Pickcat 账号密码")
         print("未提供Pickcat账号密码")
         sys.exit(-1)
     account = await Account.login(username, password)
+    logger.info("Pickcat 登录成功")
 
     while True:
         await refresh_queue(account, sess)
@@ -132,14 +158,31 @@ async def main():
         id_stmt = select(Processed).where(Processed.is_proc == False).limit(1)
         id = (await sess.exec(id_stmt)).first()
         if id is None:
+            logger.debug("当前没有待处理主题，10 秒后重试")
             await asyncio.sleep(10)
             continue
 
-        detail = await get_topic_details(account, id.id)
-        await proc(model, detail)
-        id.is_proc = True
-        sess.add(id)
-        await sess.commit()
+        try:
+            logger.info("开始处理主题：%s", id.id)
+            detail = await get_topic_details(account, id.id)
+            llm_resp = await proc(model, detail)
+            id.is_proc = True
+            sess.add(id)
+            await sess.commit()
+            logger.info("主题处理完成：%s", id.id)
+
+            # 发出去
+            await account.client.post(
+                "/api/v1/posts",
+                json={
+                    "topicId": id.id,
+                    "markdown": llm_resp.content,
+                    "replyToPostNumber": 1,
+                },
+            )
+        except Exception:
+            logger.exception("处理主题失败：%s", id.id)
+            await sess.rollback()
         await asyncio.sleep(30)
 
 
