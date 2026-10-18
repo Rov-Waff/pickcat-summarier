@@ -114,13 +114,16 @@ async def proc(model: ChatOpenAI, topic: TopicDetial) -> AIMessage:
     logger.debug(resp.content)
     return resp
 
-BANNER=r"""
+
+BANNER = r"""
   ____                                       _
  / ___| _   _ _ __ ___  _ __ ___   __ _ _ __(_)_______ _ __
  \___ \| | | | '_ ` _ \| '_ ` _ \ / _` | '__| |_  / _ \ '__|
   ___) | |_| | | | | | | | | | | | (_| | |  | |/ /  __/ |
  |____/ \__,_|_| |_| |_|_| |_| |_|\__,_|_|  |_/___\___|_|
 """
+
+
 async def main():
     print(BANNER)
     dotenv.load_dotenv()
@@ -181,7 +184,8 @@ async def main():
                 "/api/v1/posts",
                 json={
                     "topicId": topic_id,
-                    "markdown": llm_resp.content,
+                    "markdown": str(llm_resp.content)
+                    + "\n [了解更多关于课代表](https://pickcat.dao3.fun/forum/post/01a149d7-d590-7a66-bb38-3c967e10646f)",
                     "replyToPostNumber": 1,
                 },
             )
